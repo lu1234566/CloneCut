@@ -1,6 +1,11 @@
 package com.example.data.repository
 
+import com.example.BuildConfig
+import com.example.data.api.Content
+import com.example.data.api.GenerationConfig
 import com.example.data.api.GeminiApiService
+import com.example.data.api.GeminiRequest
+import com.example.data.api.Part
 import com.example.data.api.RetrofitClient
 import com.example.data.local.VideoProject
 import com.example.data.local.VideoProjectDao
@@ -10,6 +15,7 @@ import com.squareup.moshi.Types
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import kotlin.math.max
 
 @JsonClass(generateAdapter = true)
 data class VideoTimelineClip(
@@ -76,7 +82,34 @@ class ChatRepository(
         userRequests: String,
         customApiKey: String? = null
     ): List<TextTimelineClip> = withContext(Dispatchers.IO) {
-        fallbackTimeline(niche, targetDurationSec)
+        val apiKey = if (!customApiKey.isNullOrBlank()) customApiKey else BuildConfig.GEMINI_API_KEY
+        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") return@withContext fallbackTimeline(niche, targetDurationSec)
+        val prompt = "Gere quatro legendas em portugues para video curto. Tema: $niche. Duracao: $targetDurationSec. Pedido: $userRequests. Use linhas inicio|fim|texto."
+        val request = GeminiRequest(
+            contents = listOf(Content(role = "user", parts = listOf(Part(text = prompt)))),
+            generationConfig = GenerationConfig(temperature = 0.7, maxOutputTokens = 512)
+        )
+        return@withContext try {
+            val text = apiService.generateContent(apiKey, request).candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text.orEmpty()
+            parseGeminiTimeline(text, targetDurationSec).ifEmpty { fallbackTimeline(niche, targetDurationSec) }
+        } catch (e: Exception) {
+            fallbackTimeline(niche, targetDurationSec)
+        }
+    }
+
+    private fun parseGeminiTimeline(text: String, targetDurationSec: Int): List<TextTimelineClip> {
+        val maxDuration = targetDurationSec.coerceAtLeast(4).toFloat()
+        val out = mutableListOf<TextTimelineClip>()
+        text.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.take(8).forEachIndexed { index, line ->
+            val parts = line.split("|", limit = 3)
+            if (parts.size >= 3) {
+                val start = (parts[0].trim().toFloatOrNull() ?: (index * maxDuration / 4f)).coerceIn(0f, maxDuration)
+                val end = (parts[1].trim().toFloatOrNull() ?: ((index + 1) * maxDuration / 4f)).coerceIn(start + 0.5f, maxDuration)
+                val caption = parts[2].trim().ifBlank { "Cena ${index + 1}" }
+                out.add(TextTimelineClip("ai_${index}_${System.nanoTime()}", caption, start, max(0.5f, end - start), if (index == 0) "#00F2FE" else "#FFFFFF", if (index == 0) 18f else 16f, if (index % 2 == 0) "Glitch" else "Neon Sparkle"))
+            }
+        }
+        return out.take(4)
     }
 
     private fun fallbackTimeline(niche: String, targetDurationSec: Int): List<TextTimelineClip> {
