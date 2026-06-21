@@ -17,61 +17,38 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Apply code fixes
+      - name: Patch project files
         shell: bash
         run: |
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
-
-          def write_if_changed(path, content):
-              p = Path(path)
-              old = p.read_text(encoding='utf-8')
-              if old != content:
-                  p.write_text(content, encoding='utf-8')
-
           repo = Path('.')
 
-          # Fix Gemini prompt interpolation and generated IDs.
-          cr_path = repo / 'app/src/main/java/com/example/data/repository/ChatRepository.kt'
-          cr = cr_path.read_text(encoding='utf-8')
-          replacements = {
-              'for a video of ${\'$\'}targetDurationSec seconds on the topic: "${\'$\'}niche".': 'for a video of $targetDurationSec seconds on the topic: "$niche".',
-              'Additional Requests: "${\'$\'}userRequests"': 'Additional Requests: "$userRequests"',
-              '- Split the total ${\'$\'}targetDurationSec seconds fairly.': '- Split the total $targetDurationSec seconds fairly.',
-              '11|${\'$\'}targetDurationSec|Siga para receber o próximo tutorial!': '11|$targetDurationSec|Siga para receber o próximo tutorial!',
-              'id = "ai_${\'$\'}index"': 'id = "ai_${index}_${System.nanoTime()}"',
-              'TextTimelineClip("ai_0", "⚡ Gancho: ${\'$\'}niche", 0f, 3f, "#00F2FE", 18f, "Neon")': 'TextTimelineClip("ai_0_${System.nanoTime()}", "⚡ Gancho: $niche", 0f, 3f, "#00F2FE", 18f, "Neon")',
-              'generationConfig = GenerationConfig(temperature = 0.7)': 'generationConfig = GenerationConfig(temperature = 0.7, maxOutputTokens = 512)',
-              'val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""': 'val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text.orEmpty()'
-          }
-          for old, new in replacements.items():
+          crp = repo / 'app/src/main/java/com/example/data/repository/ChatRepository.kt'
+          cr = crp.read_text(encoding='utf-8')
+          for old, new in {
+            "${'$'}targetDurationSec": "$targetDurationSec",
+            "${'$'}niche": "$niche",
+            "${'$'}userRequests": "$userRequests",
+            'id = "ai_$index"': 'id = "ai_${index}_${System.nanoTime()}"',
+            'GenerationConfig(temperature = 0.7)': 'GenerationConfig(temperature = 0.7, maxOutputTokens = 512)',
+            '?.text ?: ""': '?.text.orEmpty()'
+          }.items():
               cr = cr.replace(old, new)
-          write_if_changed(cr_path, cr)
+          crp.write_text(cr, encoding='utf-8')
 
-          # Fix ViewModel state traps and unsafe volume ranges.
-          vm_path = repo / 'app/src/main/java/com/example/ui/ChatViewModel.kt'
-          vm = vm_path.read_text(encoding='utf-8')
-          vm = vm.replace(
-              'private var hasBootstrappedProjects = false',
-              'private var hasBootstrappedProjects = sharedPrefs.getBoolean("starter_project_bootstrapped", false)'
-          )
-          vm = vm.replace(
-              'hasBootstrappedProjects = true\n                        createStarterProject("Meu Vídeo Autoral 1")',
-              'hasBootstrappedProjects = true\n                        sharedPrefs.edit().putBoolean("starter_project_bootstrapped", true).apply()\n                        createStarterProject("Meu Vídeo Autoral 1")'
-          )
-          vm = vm.replace(
-              'hasBootstrappedProjects = true\n                    if (_activeProject.value == null) {',
-              'hasBootstrappedProjects = true\n                    sharedPrefs.edit().putBoolean("starter_project_bootstrapped", true).apply()\n                    if (_activeProject.value == null) {'
-          )
+          vmp = repo / 'app/src/main/java/com/example/ui/ChatViewModel.kt'
+          vm = vmp.read_text(encoding='utf-8')
+          vm = vm.replace('private var hasBootstrappedProjects = false', 'private var hasBootstrappedProjects = sharedPrefs.getBoolean("starter_project_bootstrapped", false)')
+          vm = vm.replace('hasBootstrappedProjects = true\n                        createStarterProject("Meu Vídeo Autoral 1")', 'hasBootstrappedProjects = true\n                        sharedPrefs.edit().putBoolean("starter_project_bootstrapped", true).apply()\n                        createStarterProject("Meu Vídeo Autoral 1")')
+          vm = vm.replace('hasBootstrappedProjects = true\n                    if (_activeProject.value == null) {', 'hasBootstrappedProjects = true\n                    sharedPrefs.edit().putBoolean("starter_project_bootstrapped", true).apply()\n                    if (_activeProject.value == null) {')
           vm = vm.replace('aud.copy(volume = newVol)', 'aud.copy(volume = newVol.coerceIn(0f, 1f))')
-
           start = vm.find('    fun generateAiContentToTimeline() {')
           marker = '\n    // --- SAVING & CREATING PROJECTS IN DATABASE ---'
           end = vm.find(marker, start)
           if start != -1 and end != -1:
-              new_func = '''    fun generateAiContentToTimeline() {
+              vm = vm[:start] + '''    fun generateAiContentToTimeline() {
         val topic = _aiTopicInput.value.trim()
         if (topic.isBlank() || _isGeneratingAi.value) return
         _isGeneratingAi.value = true
@@ -85,10 +62,8 @@ jobs:
                     userRequests = "Incluir ganchos rápidos para redes sociais",
                     customApiKey = _customApiKey.value
                 )
-
                 if (responseCaptions.isNotEmpty()) {
                     _activeTexts.value = (_activeTexts.value + responseCaptions).sortedBy { it.startSec }
-
                     val newAudios = responseCaptions.map { sub ->
                         val shortCaps = if (sub.text.length > 20) sub.text.take(20) + "..." else sub.text
                         AudioTimelineClip(
@@ -103,38 +78,26 @@ jobs:
                     _activeAudio.value = (_activeAudio.value + newAudios).sortedBy { it.startSec }
                     saveCurrentStateToDb()
                 }
-
                 _aiTopicInput.value = ""
             } finally {
                 _isGeneratingAi.value = false
             }
         }
     }
-'''
-              vm = vm[:start] + new_func + vm[end:]
-          write_if_changed(vm_path, vm)
+''' + vm[end:]
+          vmp.write_text(vm, encoding='utf-8')
 
-          # Rename project root for generated Gradle tasks and IDE display.
-          settings_path = repo / 'settings.gradle.kts'
-          settings = settings_path.read_text(encoding='utf-8').replace('rootProject.name = "My Application"', 'rootProject.name = "CloneCut"')
-          write_if_changed(settings_path, settings)
+          sp = repo / 'settings.gradle.kts'
+          settings = sp.read_text(encoding='utf-8').replace('rootProject.name = "My Application"', 'rootProject.name = "CloneCut"')
+          sp.write_text(settings, encoding='utf-8')
 
-          # Remove one-off correction workflows after applying their work.
-          for rel in [
-              '.github/workflows/apply-clonecut-corrections.yml',
-              '.github/workflows/fix-followup-bugs.yml',
-          ]:
+          for rel in ['.github/workflows/apply-clonecut-corrections.yml', '.github/workflows/fix-followup-bugs.yml']:
               p = repo / rel
               if p.exists():
                   p.unlink()
           PY
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then
-            echo "No follow-up fixes needed."
-            exit 0
-          fi
-          git commit -m "Fix CloneCut follow-up bugs"
+          git commit -m "Fix remaining CloneCut bugs" || exit 0
           git push origin HEAD:main
