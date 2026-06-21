@@ -1,0 +1,108 @@
+-            Create a highly interactive text subtitle track split into EXACTLY 4 logical sections for a video of $targetDurationSec seconds on the topic: "$niche".
+-            Additional Requests: "$userRequests"
+-            
++            Create a highly interactive text subtitle track split into EXACTLY 4 logical sections for a video of ${'$'}targetDurationSec seconds on the topic: "${'$'}niche".
++            Additional Requests: "${'$'}userRequests"
++
+             Return ONLY 4 lines, each representing one text clip segment in the format:
+             SEC_START|SEC_END|SUBTITLE_TEXT
+-            
++
+             Guidelines:
+-            - Split the total $targetDurationSec seconds fairly.
++            - Split the total ${'$'}targetDurationSec seconds fairly.
+             - Ensure subtitles are in Portuguese, highly catchy and engaging.
+             - Your reply MUST ONLY have 4 lines in this exact format, with NO introduction and NO other marks.
+             Example:
+-            0|3|⚡ Gancho: O maior segredo de todos!
+-            3|7|💡 Quase ninguém te conta esse detalhe...
+-            7|11|🚀 Basta aplicar o efeito de flash em 3D.
+-            11|$targetDurationSec|🔥 Siga para receber o próximo tutorial!
++            0|3|Gancho: O maior segredo de todos!
++            3|7|Quase ningu\u00E9m te conta esse detalhe...
++            7|11|Basta aplicar o efeito de flash em 3D.
++            11|${'$'}targetDurationSec|Siga para receber o pr\u00F3ximo tutorial!
+         """.trimIndent()
+ 
+         val request = GeminiRequest(
+@@ -176,17 +161,18 @@ class ChatRepository(
+             var index = 0
+ 
+             text.lines().forEach { line ->
+-                val parts = line.split("|")
++                // Only split into 3 parts so the subtitle text itself may contain '|'.
++                val parts = line.split("|", limit = 3)
+                 if (parts.size >= 3) {
+                     val start = parts[0].trim().toFloatOrNull() ?: (index * 3f)
+                     val end = parts[1].trim().toFloatOrNull() ?: ((index + 1) * 3f)
+                     val caption = parts[2].trim()
+-                    
++
+                     val duration = if (end > start) end - start else 3f
+                     val effect = if (index % 2 == 0) "Glitch" else "Neon Sparkle"
+                     outputList.add(
+                         TextTimelineClip(
+-                            id = "ai_$index",
++                            id = "ai_${'$'}index",
+                             text = caption,
+                             startSec = start,
+                             durationSec = duration,
+@@ -199,12 +185,12 @@ class ChatRepository(
+             }
+ 
+             if (outputList.isEmpty()) {
+-                // Secondary parsing if formatting slightly differs
++                // Secondary parsing fallback if formatting slightly differs
+                 listOf(
+-                    TextTimelineClip("ai_0", "⚡ Gancho: Olha que sensacional!", 0f, 3f, "#00F2FE", 18f, "Neon"),
+-                    TextTimelineClip("ai_1", "💡 Sabia que pode cortar clipes com IA?", 3f, 7f, "#FFFFFF", 16f, "Surgir"),
+-                    TextTimelineClip("ai_2", "🔥 Além de fazer transições em um toque.", 7f, 10f, "#FE0979", 16f, "Glitch"),
+-                    TextTimelineClip("ai_3", "👉 Inscreva-se e edite seu vídeo no CapCut!", 10f, targetDurationSec.toFloat(), "#10B981", 17f, "Slide")
++                    TextTimelineClip("ai_0", "\u26A1 Gancho: Olha que sensacional!", 0f, 3f, "#00F2FE", 18f, "Neon"),
++                    TextTimelineClip("ai_1", "\uD83D\uDCA1 Sabia que pode cortar clipes com IA?", 3f, 4f, "#FFFFFF", 16f, "Surgir"),
++                    TextTimelineClip("ai_2", "\uD83D\uDD25 Al\u00E9m de fazer transi\u00E7\u00F5es em um toque.", 7f, 3f, "#FE0979", 16f, "Glitch"),
++                    TextTimelineClip("ai_3", "\uD83D\uDC49 Inscreva-se e edite seu v\u00EDdeo no CapCut!", 10f, (targetDurationSec - 10).coerceAtLeast(2).toFloat(), "#10B981", 17f, "Slide")
+                 )
+             } else {
+                 outputList
+@@ -212,10 +198,10 @@ class ChatRepository(
+         } catch (e: Exception) {
+             // Dynamic helpful fallback with user parameters
+             listOf(
+-                TextTimelineClip("ai_0", "⚡ Gancho: $niche", 0f, 3f, "#00F2FE", 18f, "Neon"),
+-                TextTimelineClip("ai_1", "💡 Dica de nível Pro sobre este nicho.", 3f, 7f, "#FFFFFF", 16f, "Surgir"),
+-                TextTimelineClip("ai_2", "🍀 Lembra de manter as batidas ativas no CapCut.", 7f, 10f, "#FE0979", 16f, "Glitch"),
+-                TextTimelineClip("ai_3", "👉 Salve o projeto e veja o resultado final!", 10f, targetDurationSec.toFloat(), "#10B981", 17f, "Slide")
++                TextTimelineClip("ai_0", "\u26A1 Gancho: ${'$'}niche", 0f, 3f, "#00F2FE", 18f, "Neon"),
++                TextTimelineClip("ai_1", "\uD83D\uDCA1 Dica de n\u00EDvel Pro sobre este nicho.", 3f, 4f, "#FFFFFF", 16f, "Surgir"),
++                TextTimelineClip("ai_2", "\uD83C\uDF40 Lembra de manter as batidas ativas no CapCut.", 7f, 3f, "#FE0979", 16f, "Glitch"),
++                TextTimelineClip("ai_3", "\uD83D\uDC49 Salve o projeto e veja o resultado final!", 10f, (targetDurationSec - 10).coerceAtLeast(2).toFloat(), "#10B981", 17f, "Slide")
+             )
+         }
+     }
+diff --git a/app/src/main/java/com/example/ui/ChatViewModel.kt b/app/src/main/java/com/example/ui/ChatViewModel.kt
+index a1a0742..3578657 100644
+--- a/app/src/main/java/com/example/ui/ChatViewModel.kt
++++ b/app/src/main/java/com/example/ui/ChatViewModel.kt
+@@ -8,9 +8,12 @@ import androidx.lifecycle.ViewModelProvider
+ import androidx.lifecycle.viewModelScope
+ import com.example.data.local.VideoProject
+ import com.example.data.repository.*
++import com.squareup.moshi.Moshi
++import com.squareup.moshi.Types
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.flow.*
++import kotlinx.coroutines.isActive
+ import kotlinx.coroutines.launch
+ import java.util.UUID
+ 
+@@ -21,6 +24,11 @@ class ChatViewModel(
+ 
+     private val sharedPrefs = application.getSharedPreferences("capcut_clone_prefs", Context.MODE_PRIVATE)
+ 
++    // Moshi adapter to persist the exported-videos gallery as an ordered JSON list
++    // (SharedPreferences StringSet does not preserve order).
++    private val galleryAdapter = Moshi.Builder().build()
++        .adapter<List<String>>(Types.newParameterizedType(List::class.java, String::class.java))
++
