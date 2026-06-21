@@ -1,0 +1,6 @@
+{
+  "name": "CapCut Editor",
+  "description": "Um clone interativo do CapCut para edição multi-track de vídeo, áudio, legendas automáticas de I.A., rampa de velocidade e exportação.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
