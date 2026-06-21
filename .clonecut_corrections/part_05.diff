@@ -1,0 +1,148 @@
+     // Current screen Tab: "editor", "projects", "gallery", "settings"
+     private val _currentTab = MutableStateFlow("editor")
+     val currentTab: StateFlow<String> = _currentTab.asStateFlow()
+@@ -101,7 +109,7 @@ class ChatViewModel(
+     val sampleVideoThemes = listOf(
+         "Abertura Neo" to "#1A1F32",
+         "Cena Natureza" to "#10B981",
+-        "Fração Urbana" to "#FE0979",
++        "Fra\u00E7\u00E3o Urbana" to "#FE0979",
+         "Encerramento" to "#4F46E5"
+     )
+ 
+@@ -112,10 +120,15 @@ class ChatViewModel(
+     private val _exportedVideos = MutableStateFlow<List<String>>(emptyList())
+     val exportedVideos: StateFlow<List<String>> = _exportedVideos.asStateFlow()
+ 
++    // Guards one-time auto-creation of the starter project so deleting the last
++    // project does not silently respawn a new one.
++    private var hasBootstrappedProjects = false
++
+     init {
+-        // Automatic ticker coroutine for playhead simulation
++        // Automatic ticker coroutine for playhead simulation.
++        // Tied to viewModelScope, so it is cancelled automatically with the ViewModel.
+         viewModelScope.launch {
+-            while (true) {
++            while (isActive) {
+                 delay(100)
+                 if (_isPlaying.value) {
+                     val maxS = getMaxTimelineDuration()
+@@ -132,19 +145,48 @@ class ChatViewModel(
+             }
+         }
+ 
+-        // Prepopulate standard samples when first launching so empty screen is not shown
++        // Prepopulate one sample project ONLY on first launch (empty db).
++        // After bootstrap, an empty list is respected so the user can have zero projects.
+         viewModelScope.launch {
+             repository.allProjects.collect { list ->
+                 if (list.isEmpty()) {
+-                    createStarterProject("Meu Vídeo Autoral 1")
+-                } else if (_activeProject.value == null) {
+-                    loadProject(list.first())
++                    if (!hasBootstrappedProjects) {
++                        hasBootstrappedProjects = true
++                        createStarterProject("Meu V\u00EDdeo Autoral 1")
++                    }
++                } else {
++                    hasBootstrappedProjects = true
++                    if (_activeProject.value == null) {
++                        loadProject(list.first())
++                    }
+                 }
+             }
+         }
+ 
+-        // Restore custom gallery lists
+-        _exportedVideos.value = sharedPrefs.getStringSet("exported_clips", emptySet())?.toList() ?: emptyList()
++        // Restore exported gallery list (ordered)
++        _exportedVideos.value = loadGalleryFromPrefs()
++    }
++
++    private fun loadGalleryFromPrefs(): List<String> {
++        val json = sharedPrefs.getString("exported_clips_json", null)
++        if (!json.isNullOrBlank()) {
++            return try {
++                galleryAdapter.fromJson(json) ?: emptyList()
++            } catch (e: Exception) {
++                emptyList()
++            }
++        }
++        // Migrate legacy unordered StringSet if present
++        val legacy = sharedPrefs.getStringSet("exported_clips", emptySet())?.toList() ?: emptyList()
++        if (legacy.isNotEmpty()) {
++            persistGallery(legacy)
++            sharedPrefs.edit().remove("exported_clips").apply()
++        }
++        return legacy
++    }
++
++    private fun persistGallery(list: List<String>) {
++        sharedPrefs.edit().putString("exported_clips_json", galleryAdapter.toJson(list)).apply()
+     }
+ 
+     fun selectTab(tab: String) {
+@@ -229,22 +271,18 @@ class ChatViewModel(
+         }
+     }
+ 
+-    // 4. Duplicate Clip
++    // 4. Duplicate Clip (append at end, keep list ordered by startSec)
+     fun duplicateSelectedClip() {
+         val cid = _selectedClipId.value ?: return
+         val original = _activeClips.value.find { it.id == cid } ?: return
+-        val clips = _activeClips.value.toMutableList()
+-        val index = clips.indexOf(original)
+-
+-        val duration = original.durationSec
+-        val lastEnd = clips.map { it.startSec + it.durationSec }.maxOrNull() ?: 12f
+ 
++        val lastEnd = _activeClips.value.map { it.startSec + it.durationSec }.maxOrNull() ?: 12f
+         val duplicated = original.copy(
+             id = UUID.randomUUID().toString(),
+             startSec = lastEnd
+         )
+-        clips.add(index + 1, duplicated)
+-        _activeClips.value = clips
++        // Keep the track sorted by start time so timeline rendering stays consistent.
++        _activeClips.value = (_activeClips.value + duplicated).sortedBy { it.startSec }
+         _selectedClipId.value = duplicated.id
+         saveCurrentStateToDb()
+     }
+@@ -287,7 +325,7 @@ class ChatViewModel(
+ 
+     // Add audio element
+     fun addAudioTrack(name: String, isNarrator: Boolean) {
+-        val activeProj = _activeProject.value ?: return
++        _activeProject.value ?: return
+         val sounds = _activeAudio.value.toMutableList()
+         val start = _currentTime.value
+         val newSound = AudioTimelineClip(
+@@ -397,74 +435,75 @@ class ChatViewModel(
+         val voiceName = _selectedAiVoice.value
+ 
+         val voiceAudio = AudioTimelineClip(
+-            id = "tts_${UUID.randomUUID().hashCode()}",
+-            audioName = "🗣️ [$voiceName]: \"${if (textClip.text.length > 15) textClip.text.take(15) + "..." else textClip.text}\"",
++            id = "tts_${UUID.randomUUID()}",
++            audioName = "\uD83D\uDDE3\uFE0F [$voiceName]: \"${if (textClip.text.length > 15) textClip.text.take(15) + "..." else textClip.text}\"",
+             startSec = textClip.startSec,
+             durationSec = textClip.durationSec,
+             volume = 1.0f,
+             isNarratorVoice = true
+         )
+ 
+-        val updatedAudios = _activeAudio.value.toMutableList()
+-        // Remove existing TTS audio starting at same place to allow redo
+-        val filtered = updatedAudios.filterNot { it.startSec == textClip.startSec && it.isNarratorVoice }
+-        val finalAudios = filtered + voiceAudio
+-        _activeAudio.value = finalAudios
++        // Replace any existing narrator TTS starting at the same position (allow redo),
++        // but keep all other audio tracks intact.
++        val filtered = _activeAudio.value.filterNot { it.startSec == textClip.startSec && it.isNarratorVoice }
++        _activeAudio.value = filtered + voiceAudio
+         _selectedAudioId.value = voiceAudio.id
+         saveCurrentStateToDb()
+     }
+ 
