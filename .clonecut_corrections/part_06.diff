@@ -1,0 +1,127 @@
+     // --- AI POWERED SHORTCUTS ---
+ 
+-    // 1. Legendas Automáticas: transcribe current project audio track into synchronous subtitles
++    // 1. Legendas Autom\u00E1ticas: transcribe current project audio/clips into subtitles.
++    // Appends to existing text track instead of wiping it.
+     fun triggerAutoCaps() {
+         val generatedSubtexts = mutableListOf<TextTimelineClip>()
+         val currentAudios = _activeAudio.value
+         val currentClips = _activeClips.value
+ 
+         if (currentAudios.isNotEmpty()) {
+-            // Transcribe from separate audio tracks
+             currentAudios.forEachIndexed { idx, aud ->
+-                val cleanName = aud.audioName.replace(Regex("🗣️|🎵|🎵\\s|🗣️\\s|🎧|\\[.*?\\]:?\\s?|\\\""), "")
++                val cleanName = aud.audioName.replace(Regex("\uD83D\uDDE3\uFE0F|\uD83C\uDFB5|\uD83C\uDFA7|\\[.*?\\]:?\\s?|\""), "").trim()
+                 generatedSubtexts.add(
+                     TextTimelineClip(
+-                        id = "auto_cap_aud_$idx",
+-                        text = "🎤 $cleanName",
++                        id = "auto_cap_aud_${UUID.randomUUID()}",
++                        text = "\uD83C\uDFA4 $cleanName",
+                         startSec = aud.startSec,
+                         durationSec = aud.durationSec,
+-                        colorHex = "#00F2FE", // Cyan
++                        colorHex = "#00F2FE",
+                         fontSizeSp = 15f,
+                         styleAnim = "Neon Sparkle"
+                     )
+                 )
+             }
+         } else if (currentClips.isNotEmpty()) {
+-            // No audio tracks, transcribe based on thematic video clips
+             currentClips.forEachIndexed { idx, clip ->
+                 val dialogue = when (clip.sourceName) {
+-                    "Natureza Intro" -> "🍀 O amanhecer de um novo dia na floresta..."
+-                    "Ação Cortada" -> "⚡ Sinta a adrenalina pura em movimento rápido!"
+-                    "Cidade Broll" -> "🌆 O coração frenético da metrópole à noite..."
+-                    else -> "✨ Desvendando novos ângulos com tecnologia I.A."
++                    "Natureza Intro" -> "\uD83C\uDF40 O amanhecer de um novo dia na floresta..."
++                    "A\u00E7\u00E3o Cortada" -> "\u26A1 Sinta a adrenalina pura em movimento r\u00E1pido!"
++                    "Cidade Broll" -> "\uD83C\uDF06 O cora\u00E7\u00E3o fren\u00E9tico da metr\u00F3pole \u00E0 noite..."
++                    else -> "\u2728 Desvendando novos \u00E2ngulos com tecnologia I.A."
+                 }
+                 generatedSubtexts.add(
+                     TextTimelineClip(
+-                        id = "auto_cap_clip_$idx",
++                        id = "auto_cap_clip_${UUID.randomUUID()}",
+                         text = dialogue,
+                         startSec = clip.startSec,
+                         durationSec = clip.durationSec,
+-                        colorHex = "#FFFF00", // Yellow for video track speech transcription!
++                        colorHex = "#FFFF00",
+                         fontSizeSp = 15f,
+                         styleAnim = "Letra por Letra"
+                     )
+                 )
+             }
+         }
+-        _activeTexts.value = generatedSubtexts
+-        saveCurrentStateToDb()
++
++        if (generatedSubtexts.isNotEmpty()) {
++            _activeTexts.value = (_activeTexts.value + generatedSubtexts).sortedBy { it.startSec }
++            saveCurrentStateToDb()
++        }
+     }
+ 
+-    // 2. IA Script-to-Timeline: calling Gemini and appending directly to live tracks
++    // 2. IA Script-to-Timeline: calling Gemini and appending to live tracks (non-destructive).
+     fun generateAiContentToTimeline() {
+         val topic = _aiTopicInput.value
+         if (topic.isBlank() || _isGeneratingAi.value) return
+@@ -472,36 +511,31 @@ class ChatViewModel(
+ 
+         viewModelScope.launch {
+             val duration = getMaxTimelineDuration().toInt().coerceIn(10, 60)
+-            
+-            // Runs Gemini builder in background threads
++
+             val responseCaptions = repository.draftAiScriptToTimeline(
+                 niche = topic,
+                 targetDurationSec = duration,
+-                userRequests = "Incluir ganchos rápidos para redes sociais",
++                userRequests = "Incluir ganchos r\u00E1pidos para redes sociais",
+                 customApiKey = _customApiKey.value
+             )
+ 
+-            // Construct new tracks
+-            _activeTexts.value = responseCaptions
++            // Append new captions to the existing text track.
++            _activeTexts.value = (_activeTexts.value + responseCaptions).sortedBy { it.startSec }
+ 
+-            // Add corresponding simulated synthesised narrative speech voiceovers!
+-            val updatedAudios = mutableListOf<AudioTimelineClip>()
+-            responseCaptions.forEachIndexed { i, sub ->
++            // Append corresponding synthesized narrator voiceovers without erasing existing audio.
++            val newAudios = responseCaptions.mapIndexed { i, sub ->
+                 val shortCaps = if (sub.text.length > 20) sub.text.take(20) + "..." else sub.text
+-                updatedAudios.add(
+-                    AudioTimelineClip(
+-                        id = "narrator_ai_$i",
+-                        audioName = "IA Voz: \"$shortCaps\"",
+-                        startSec = sub.startSec,
+-                        durationSec = sub.durationSec,
+-                        volume = 1.0f,
+-                        isNarratorVoice = true
+-                    )
++                AudioTimelineClip(
++                    id = "narrator_ai_${UUID.randomUUID()}",
++                    audioName = "IA Voz: \"$shortCaps\"",
++                    startSec = sub.startSec,
++                    durationSec = sub.durationSec,
++                    volume = 1.0f,
++                    isNarratorVoice = true
+                 )
+             }
+-            _activeAudio.value = updatedAudios
++            _activeAudio.value = (_activeAudio.value + newAudios).sortedBy { it.startSec }
+ 
+-            // Clear settings
+             _aiTopicInput.value = ""
+             _isGeneratingAi.value = false
+             saveCurrentStateToDb()
+@@ -531,14 +565,14 @@ class ChatViewModel(
+         viewModelScope.launch {
+             val defaultClips = listOf(
+                 VideoTimelineClip("sc_1", "Natureza Intro", 0f, 4f, 1f, "Fade"),
