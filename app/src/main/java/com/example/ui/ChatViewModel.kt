@@ -1,72 +1,640 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.VideoProject
 import com.example.data.repository.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-class ChatViewModel(application: Application, private val repository: ChatRepository) : AndroidViewModel(application) {
-    private val prefs = application.getSharedPreferences("capcut_clone_prefs", 0)
-    private val _currentTab = MutableStateFlow("editor"); val currentTab = _currentTab.asStateFlow()
-    private val _activeProject = MutableStateFlow<VideoProject?>(null); val activeProject = _activeProject.asStateFlow()
-    val savedProjects = repository.allProjects.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    private val _activeClips = MutableStateFlow<List<VideoTimelineClip>>(emptyList()); val activeClips = _activeClips.asStateFlow()
-    private val _activeAudio = MutableStateFlow<List<AudioTimelineClip>>(emptyList()); val activeAudio = _activeAudio.asStateFlow()
-    private val _activeTexts = MutableStateFlow<List<TextTimelineClip>>(emptyList()); val activeTexts = _activeTexts.asStateFlow()
-    private val _currentTime = MutableStateFlow(0f); val currentTime = _currentTime.asStateFlow()
-    private val _isPlaying = MutableStateFlow(false); val isPlaying = _isPlaying.asStateFlow()
-    private val _selectedClipId = MutableStateFlow<String?>(null); val selectedClipId = _selectedClipId.asStateFlow()
-    private val _selectedAudioId = MutableStateFlow<String?>(null); val selectedAudioId = _selectedAudioId.asStateFlow()
-    private val _selectedTextId = MutableStateFlow<String?>(null); val selectedTextId = _selectedTextId.asStateFlow()
-    private val _activeFilter = MutableStateFlow("Nenhum"); val activeFilter = _activeFilter.asStateFlow()
-    private val _speedRampProfile = MutableStateFlow("Normal"); val speedRampProfile = _speedRampProfile.asStateFlow()
-    private val _useChromaKey = MutableStateFlow(false); val useChromaKey = _useChromaKey.asStateFlow()
-    private val _chromaColorHex = MutableStateFlow("#00FF00"); val chromaColorHex = _chromaColorHex.asStateFlow()
-    private val _useAiBackgroundRemover = MutableStateFlow(false); val useAiBackgroundRemover = _useAiBackgroundRemover.asStateFlow()
-    private val _useAiNoiseReduction = MutableStateFlow(false); val useAiNoiseReduction = _useAiNoiseReduction.asStateFlow()
-    private val _portraitStyle = MutableStateFlow("Nenhum"); val portraitStyle = _portraitStyle.asStateFlow()
-    private val _selectedAiVoice = MutableStateFlow("Narrador de Cinema"); val selectedAiVoice = _selectedAiVoice.asStateFlow()
-    private val _isGeneratingAi = MutableStateFlow(false); val isGeneratingAi = _isGeneratingAi.asStateFlow()
-    private val _aiTopicInput = MutableStateFlow(""); val aiTopicInput = _aiTopicInput.asStateFlow()
-    private val _customApiKey = MutableStateFlow(prefs.getString("custom_api_key", "") ?: ""); val customApiKey = _customApiKey.asStateFlow()
-    private val _exportProgress = MutableStateFlow(-1); val exportProgress = _exportProgress.asStateFlow()
-    private val _exportedVideos = MutableStateFlow<List<String>>(emptyList()); val exportedVideos = _exportedVideos.asStateFlow()
-    private var bootstrapped = prefs.getBoolean("starter_project_bootstrapped", false)
-    val sampleVideoThemes = listOf("Abertura Neo" to "#1A1F32", "Cena Natureza" to "#10B981", "Fracao Urbana" to "#FE0979", "Encerramento" to "#4F46E5")
+class ChatViewModel(
+    application: Application,
+    private val repository: ChatRepository
+) : AndroidViewModel(application) {
 
-    init { viewModelScope.launch { repository.allProjects.collect { list -> if (list.isEmpty() && !bootstrapped) { bootstrapped = true; prefs.edit().putBoolean("starter_project_bootstrapped", true).apply(); createStarterProject("Meu Video Autoral 1") } else if (list.isNotEmpty() && _activeProject.value == null) { bootstrapped = true; prefs.edit().putBoolean("starter_project_bootstrapped", true).apply(); loadProject(list.first()) } } } }
+    private val sharedPrefs = application.getSharedPreferences("capcut_clone_prefs", Context.MODE_PRIVATE)
 
-    fun selectTab(v:String){_currentTab.value=v}; fun setAiTopic(v:String){_aiTopicInput.value=v}; fun togglePlay(){_isPlaying.value=!_isPlaying.value}
-    fun seekTo(v:Float){_currentTime.value=v.coerceIn(0f,getMaxTimelineDuration())}; fun getMaxTimelineDuration():Float=maxOf(_activeClips.value.maxOfOrNull{it.startSec+it.durationSec}?:12f,_activeAudio.value.maxOfOrNull{it.startSec+it.durationSec}?:0f,_activeTexts.value.maxOfOrNull{it.startSec+it.durationSec}?:0f).coerceAtLeast(6f)
-    fun selectClip(v:String?){_selectedClipId.value=v}; fun selectAudio(v:String?){_selectedAudioId.value=v}; fun selectText(v:String?){_selectedTextId.value=v}
-    fun setAiBackgroundRemover(v:Boolean){_useAiBackgroundRemover.value=v}; fun setAiNoiseReduction(v:Boolean){_useAiNoiseReduction.value=v}; fun setPortraitStyle(v:String){_portraitStyle.value=v}; fun setSelectedAiVoice(v:String){_selectedAiVoice.value=v}
-    fun setFilter(v:String){_activeFilter.value=v;saveCurrentStateToDb()}; fun setChromaEnabled(v:Boolean){_useChromaKey.value=v;saveCurrentStateToDb()}; fun setChromaColor(v:String){_chromaColorHex.value=v;saveCurrentStateToDb()}
-    fun splitSelectedOrActiveClip(){}; fun trimSelectedClip(isLeft:Boolean,delta:Float){}; fun deleteSelectedClip(){_selectedClipId.value?.let{_activeClips.value=_activeClips.value.filterNot{x->x.id==it};saveCurrentStateToDb()}}
-    fun duplicateSelectedClip(){_activeClips.value.find{it.id==_selectedClipId.value}?.let{val n=it.copy(id=UUID.randomUUID().toString(),startSec=getMaxTimelineDuration());_activeClips.value=_activeClips.value+n;_selectedClipId.value=n.id;saveCurrentStateToDb()}}
-    fun setSpeedRamp(v:String){_speedRampProfile.value=v;saveCurrentStateToDb()}
-    fun addAudioTrack(n:String,isNarrator:Boolean){val a=AudioTimelineClip(UUID.randomUUID().toString(),n,_currentTime.value,5f,0.8f,isNarrator);_activeAudio.value=_activeAudio.value+a;_selectedAudioId.value=a.id;saveCurrentStateToDb()}
-    fun removeSelectedAudio(){_selectedAudioId.value?.let{_activeAudio.value=_activeAudio.value.filterNot{x->x.id==it};_selectedAudioId.value=null;saveCurrentStateToDb()}}
-    fun addTextCard(c:String){val t=TextTimelineClip(UUID.randomUUID().toString(),c,_currentTime.value,3f);_activeTexts.value=_activeTexts.value+t;_selectedTextId.value=t.id;saveCurrentStateToDb()}
-    fun updateSelectedTextContent(v:String){_selectedTextId.value?.let{_activeTexts.value=_activeTexts.value.map{x->if(x.id==it)x.copy(text=v)else x};saveCurrentStateToDb()}}
-    fun removeSelectedText(){_selectedTextId.value?.let{_activeTexts.value=_activeTexts.value.filterNot{x->x.id==it};_selectedTextId.value=null;saveCurrentStateToDb()}}
-    fun updateAudioVolume(id:String,v:Float){_activeAudio.value=_activeAudio.value.map{if(it.id==id)it.copy(volume=v.coerceIn(0f,1f))else it};saveCurrentStateToDb()}; fun updateSelectedAudioVolume(v:Float){_selectedAudioId.value?.let{updateAudioVolume(it,v)}}
-    fun convertTextToAiVoiceover(){_activeTexts.value.find{it.id==_selectedTextId.value}?.let{addAudioTrack("${_selectedAiVoice.value}: ${it.text.take(20)}",true)}}
-    fun triggerAutoCaps(){_activeTexts.value=_activeTexts.value+_activeClips.value.map{TextTimelineClip(UUID.randomUUID().toString(),it.sourceName,it.startSec,it.durationSec)};saveCurrentStateToDb()}
-    fun generateAiContentToTimeline(){val topic=_aiTopicInput.value.trim();if(topic.isBlank()||_isGeneratingAi.value)return;_isGeneratingAi.value=true;viewModelScope.launch{try{_activeTexts.value=_activeTexts.value+repository.draftAiScriptToTimeline(topic,getMaxTimelineDuration().toInt().coerceIn(10,60),"short video",_customApiKey.value);saveCurrentStateToDb();_aiTopicInput.value=""}finally{_isGeneratingAi.value=false}}}
-    fun loadProject(p:VideoProject){_activeProject.value=p;_activeFilter.value=p.activeFilter;_speedRampProfile.value=p.speedRampProfile;_useChromaKey.value=p.useChromaKey;_chromaColorHex.value=p.chromaBgColor;_activeClips.value=repository.deserializeClips(p.clipsJson);_activeAudio.value=repository.deserializeAudio(p.audioJson);_activeTexts.value=repository.deserializeTexts(p.textsJson);_selectedClipId.value=_activeClips.value.firstOrNull()?.id;_currentTime.value=0f}
-    fun createStarterProject(title:String){viewModelScope.launch{val c=listOf(VideoTimelineClip("sc1","Intro",0f,4f),VideoTimelineClip("sc2","Cena",4f,4f));val a=listOf(AudioTimelineClip("aud1","Audio",0f,8f));val t=listOf(TextTimelineClip("txt1","Bem-vindo",0f,3f));val id=repository.saveProject(VideoProject(title=title,clipsJson=repository.serializeClips(c),audioJson=repository.serializeAudio(a),textsJson=repository.serializeTexts(t)));repository.getProjectById(id)?.let{loadProject(it)}}}
-    fun saveCurrentStateToDb(){val p=_activeProject.value?:return;viewModelScope.launch(Dispatchers.IO){repository.saveProject(p.copy(activeFilter=_activeFilter.value,speedRampProfile=_speedRampProfile.value,useChromaKey=_useChromaKey.value,chromaBgColor=_chromaColorHex.value,clipsJson=repository.serializeClips(_activeClips.value),audioJson=repository.serializeAudio(_activeAudio.value),textsJson=repository.serializeTexts(_activeTexts.value)))} }
-    fun deleteProjectItem(p:VideoProject){viewModelScope.launch{repository.deleteProject(p);if(_activeProject.value?.id==p.id){_activeProject.value=null;_activeClips.value=emptyList();_activeAudio.value=emptyList();_activeTexts.value=emptyList()}}}
-    fun triggerExportSimulation(r:String,fps:Int){if(_exportProgress.value!=-1)return;viewModelScope.launch{_exportProgress.value=100;_exportedVideos.value=listOf("${_activeProject.value?.title?:"Projeto"} ($r @ $fps FPS).mp4")+_exportedVideos.value;_exportProgress.value=-1}}
-    fun clearMockGallery(){_exportedVideos.value=emptyList()}; fun saveApiKey(k:String){_customApiKey.value=k;prefs.edit().putString("custom_api_key",k).apply()}
+    // Current screen Tab: "editor", "projects", "gallery", "settings"
+    private val _currentTab = MutableStateFlow("editor")
+    val currentTab: StateFlow<String> = _currentTab.asStateFlow()
+
+    // Loaded project
+    private val _activeProject = MutableStateFlow<VideoProject?>(null)
+    val activeProject: StateFlow<VideoProject?> = _activeProject.asStateFlow()
+
+    // All projects from local Room db
+    val savedProjects: StateFlow<List<VideoProject>> = repository.allProjects
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Tracks editor states
+    private val _activeClips = MutableStateFlow<List<VideoTimelineClip>>(emptyList())
+    val activeClips: StateFlow<List<VideoTimelineClip>> = _activeClips.asStateFlow()
+
+    private val _activeAudio = MutableStateFlow<List<AudioTimelineClip>>(emptyList())
+    val activeAudio: StateFlow<List<AudioTimelineClip>> = _activeAudio.asStateFlow()
+
+    private val _activeTexts = MutableStateFlow<List<TextTimelineClip>>(emptyList())
+    val activeTexts: StateFlow<List<TextTimelineClip>> = _activeTexts.asStateFlow()
+
+    // Playback state
+    private val _currentTime = MutableStateFlow(0.0f)
+    val currentTime: StateFlow<Float> = _currentTime.asStateFlow()
+
+    private val _isPlaying = MutableStateFlow(false)
+    val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
+    // Element selections
+    private val _selectedClipId = MutableStateFlow<String?>(null)
+    val selectedClipId: StateFlow<String?> = _selectedClipId.asStateFlow()
+
+    private val _selectedAudioId = MutableStateFlow<String?>(null)
+    val selectedAudioId: StateFlow<String?> = _selectedAudioId.asStateFlow()
+
+    private val _selectedTextId = MutableStateFlow<String?>(null)
+    val selectedTextId: StateFlow<String?> = _selectedTextId.asStateFlow()
+
+    // Project attributes
+    private val _activeFilter = MutableStateFlow("Nenhum")
+    val activeFilter: StateFlow<String> = _activeFilter.asStateFlow()
+
+    private val _speedRampProfile = MutableStateFlow("Normal")
+    val speedRampProfile: StateFlow<String> = _speedRampProfile.asStateFlow()
+
+    private val _useChromaKey = MutableStateFlow(false)
+    val useChromaKey: StateFlow<Boolean> = _useChromaKey.asStateFlow()
+
+    private val _chromaColorHex = MutableStateFlow("#00FF00") // Green Screen
+    val chromaColorHex: StateFlow<String> = _chromaColorHex.asStateFlow()
+
+    // --- CAPCUT PREMIUM AI STATES ---
+    private val _useAiBackgroundRemover = MutableStateFlow(false)
+    val useAiBackgroundRemover: StateFlow<Boolean> = _useAiBackgroundRemover.asStateFlow()
+
+    private val _useAiNoiseReduction = MutableStateFlow(false)
+    val useAiNoiseReduction: StateFlow<Boolean> = _useAiNoiseReduction.asStateFlow()
+
+    private val _portraitStyle = MutableStateFlow("Nenhum")
+    val portraitStyle: StateFlow<String> = _portraitStyle.asStateFlow()
+
+    private val _selectedAiVoice = MutableStateFlow("Narrador de Cinema")
+    val selectedAiVoice: StateFlow<String> = _selectedAiVoice.asStateFlow()
+
+    // UI Utilities
+    private val _isGeneratingAi = MutableStateFlow(false)
+    val isGeneratingAi: StateFlow<Boolean> = _isGeneratingAi.asStateFlow()
+
+    private val _aiTopicInput = MutableStateFlow("")
+    val aiTopicInput: StateFlow<String> = _aiTopicInput.asStateFlow()
+
+    // Settings
+    private val _customApiKey = MutableStateFlow(sharedPrefs.getString("custom_api_key", "") ?: "")
+    val customApiKey: StateFlow<String> = _customApiKey.asStateFlow()
+
+    // Image/Video Render Sample references (determines which color block visual renders in preview)
+    val sampleVideoThemes = listOf(
+        "Abertura Neo" to "#1A1F32",
+        "Cena Natureza" to "#10B981",
+        "Fração Urbana" to "#FE0979",
+        "Encerramento" to "#4F46E5"
+    )
+
+    // Export progress bouncer simulation
+    private val _exportProgress = MutableStateFlow(-1) // -1 = not exporting, 0-100 = active progress
+    val exportProgress: StateFlow<Int> = _exportProgress.asStateFlow()
+
+    private val _exportedVideos = MutableStateFlow<List<String>>(emptyList())
+    val exportedVideos: StateFlow<List<String>> = _exportedVideos.asStateFlow()
+
+    init {
+        // Automatic ticker coroutine for playhead simulation
+        viewModelScope.launch {
+            while (true) {
+                delay(100)
+                if (_isPlaying.value) {
+                    val maxS = getMaxTimelineDuration()
+                    if (maxS > 0f) {
+                        var nextVal = _currentTime.value + 0.1f
+                        if (nextVal >= maxS) {
+                            nextVal = 0.0f // Loop back
+                        }
+                        _currentTime.value = nextVal
+                    } else {
+                        _isPlaying.value = false
+                    }
+                }
+            }
+        }
+
+        // Prepopulate standard samples when first launching so empty screen is not shown
+        viewModelScope.launch {
+            repository.allProjects.collect { list ->
+                if (list.isEmpty()) {
+                    createStarterProject("Meu Vídeo Autoral 1")
+                } else if (_activeProject.value == null) {
+                    loadProject(list.first())
+                }
+            }
+        }
+
+        // Restore custom gallery lists
+        _exportedVideos.value = sharedPrefs.getStringSet("exported_clips", emptySet())?.toList() ?: emptyList()
+    }
+
+    fun selectTab(tab: String) {
+        _currentTab.value = tab
+    }
+
+    fun setAiTopic(topic: String) {
+        _aiTopicInput.value = topic
+    }
+
+    // Playback modifiers
+    fun togglePlay() {
+        _isPlaying.value = !_isPlaying.value
+    }
+
+    fun seekTo(timeSec: Float) {
+        val maxDuration = getMaxTimelineDuration()
+        _currentTime.value = timeSec.coerceIn(0f, maxDuration)
+    }
+
+    fun getMaxTimelineDuration(): Float {
+        val maxClip = _activeClips.value.map { it.startSec + it.durationSec }.maxOrNull() ?: 12f
+        val maxAud = _activeAudio.value.map { it.startSec + it.durationSec }.maxOrNull() ?: 0f
+        val maxTxt = _activeTexts.value.map { it.startSec + it.durationSec }.maxOrNull() ?: 0f
+        return maxOf(maxClip, maxAud, maxTxt).coerceAtLeast(6f)
+    }
+
+    // --- TIMELINE ACTIONS DECK ---
+
+    // 1. SPLIT (Corte) at playhead position
+    fun splitSelectedOrActiveClip() {
+        val curTime = _currentTime.value
+        val clips = _activeClips.value.toMutableList()
+        val target = clips.find { curTime > it.startSec && curTime < (it.startSec + it.durationSec) }
+            ?: _activeClips.value.find { it.id == _selectedClipId.value }
+            ?: return
+
+        val offset = curTime - target.startSec
+        if (offset > 0.5f && (target.durationSec - offset) > 0.5f) {
+            val index = clips.indexOf(target)
+            clips.removeAt(index)
+
+            val part1 = target.copy(id = UUID.randomUUID().toString(), durationSec = offset)
+            val part2 = target.copy(id = UUID.randomUUID().toString(), startSec = curTime, durationSec = target.durationSec - offset)
+
+            clips.add(index, part1)
+            clips.add(index + 1, part2)
+
+            _activeClips.value = clips
+            _selectedClipId.value = part2.id
+            saveCurrentStateToDb()
+        }
+    }
+
+    // 2. TRIM Left / Right
+    fun trimSelectedClip(isLeft: Boolean, delta: Float) {
+        val cid = _selectedClipId.value ?: return
+        val clips = _activeClips.value.toMutableList()
+        val index = clips.indexOfFirst { it.id == cid }
+        if (index != -1) {
+            val clip = clips[index]
+            if (isLeft) {
+                val nextStart = (clip.startSec + delta).coerceIn(0f, clip.startSec + clip.durationSec - 0.5f)
+                val diff = nextStart - clip.startSec
+                clips[index] = clip.copy(startSec = nextStart, durationSec = clip.durationSec - diff)
+            } else {
+                val nextDur = (clip.durationSec + delta).coerceAtLeast(0.5f)
+                clips[index] = clip.copy(durationSec = nextDur)
+            }
+            _activeClips.value = clips
+            saveCurrentStateToDb()
+        }
+    }
+
+    // 3. Delete Highlighted clip
+    fun deleteSelectedClip() {
+        val cid = _selectedClipId.value
+        if (cid != null && _activeClips.value.size > 1) {
+            _activeClips.value = _activeClips.value.filterNot { it.id == cid }
+            _selectedClipId.value = _activeClips.value.firstOrNull()?.id
+            saveCurrentStateToDb()
+        }
+    }
+
+    // 4. Duplicate Clip
+    fun duplicateSelectedClip() {
+        val cid = _selectedClipId.value ?: return
+        val original = _activeClips.value.find { it.id == cid } ?: return
+        val clips = _activeClips.value.toMutableList()
+        val index = clips.indexOf(original)
+
+        val duration = original.durationSec
+        val lastEnd = clips.map { it.startSec + it.durationSec }.maxOrNull() ?: 12f
+
+        val duplicated = original.copy(
+            id = UUID.randomUUID().toString(),
+            startSec = lastEnd
+        )
+        clips.add(index + 1, duplicated)
+        _activeClips.value = clips
+        _selectedClipId.value = duplicated.id
+        saveCurrentStateToDb()
+    }
+
+    // 5. Speed Ramp curves
+    fun setSpeedRamp(ramp: String) {
+        _speedRampProfile.value = ramp
+        val cid = _selectedClipId.value ?: return
+        val clips = _activeClips.value.toMutableList()
+        val idx = clips.indexOfFirst { it.id == cid }
+        if (idx != -1) {
+            val mult = when (ramp) {
+                "Montagem Jump" -> 2.0f
+                "Hero Flash" -> 3.0f
+                "Bullet Time" -> 0.2f
+                else -> 1.0f
+            }
+            clips[idx] = clips[idx].copy(speedMultiplier = mult)
+            _activeClips.value = clips
+            saveCurrentStateToDb()
+        }
+    }
+
+    // Adjusting Active Filter
+    fun setFilter(filter: String) {
+        _activeFilter.value = filter
+        saveCurrentStateToDb()
+    }
+
+    // Chroma key settings
+    fun setChromaEnabled(enabled: Boolean) {
+        _useChromaKey.value = enabled
+        saveCurrentStateToDb()
+    }
+
+    fun setChromaColor(color: String) {
+        _chromaColorHex.value = color
+        saveCurrentStateToDb()
+    }
+
+    // Add audio element
+    fun addAudioTrack(name: String, isNarrator: Boolean) {
+        val activeProj = _activeProject.value ?: return
+        val sounds = _activeAudio.value.toMutableList()
+        val start = _currentTime.value
+        val newSound = AudioTimelineClip(
+            id = UUID.randomUUID().toString(),
+            audioName = name,
+            startSec = start,
+            durationSec = 5f,
+            volume = 0.8f,
+            isNarratorVoice = isNarrator
+        )
+        sounds.add(newSound)
+        _activeAudio.value = sounds
+        _selectedAudioId.value = newSound.id
+        saveCurrentStateToDb()
+    }
+
+    fun removeSelectedAudio() {
+        val aid = _selectedAudioId.value ?: return
+        _activeAudio.value = _activeAudio.value.filterNot { it.id == aid }
+        _selectedAudioId.value = null
+        saveCurrentStateToDb()
+    }
+
+    // Add caption cards
+    fun addTextCard(content: String) {
+        val textsList = _activeTexts.value.toMutableList()
+        val start = _currentTime.value
+        val newText = TextTimelineClip(
+            id = UUID.randomUUID().toString(),
+            text = content,
+            startSec = start,
+            durationSec = 3f,
+            colorHex = "#FFFFFF",
+            fontSizeSp = 16f,
+            styleAnim = "Surgir"
+        )
+        textsList.add(newText)
+        _activeTexts.value = textsList
+        _selectedTextId.value = newText.id
+        saveCurrentStateToDb()
+    }
+
+    fun updateSelectedTextContent(newTxt: String) {
+        val tid = _selectedTextId.value ?: return
+        _activeTexts.value = _activeTexts.value.map {
+            if (it.id == tid) it.copy(text = newTxt) else it
+        }
+        saveCurrentStateToDb()
+    }
+
+    fun removeSelectedText() {
+        val tid = _selectedTextId.value ?: return
+        _activeTexts.value = _activeTexts.value.filterNot { it.id == tid }
+        _selectedTextId.value = null
+        saveCurrentStateToDb()
+    }
+
+    fun selectClip(id: String?) {
+        _selectedClipId.value = id
+    }
+
+    fun selectAudio(id: String?) {
+        _selectedAudioId.value = id
+    }
+
+    fun selectText(id: String?) {
+        _selectedTextId.value = id
+    }
+
+    // --- CAPCUT AI ACTIONS & SETTERS ---
+    fun setAiBackgroundRemover(enabled: Boolean) {
+        _useAiBackgroundRemover.value = enabled
+    }
+
+    fun setAiNoiseReduction(enabled: Boolean) {
+        _useAiNoiseReduction.value = enabled
+    }
+
+    fun setPortraitStyle(style: String) {
+        _portraitStyle.value = style
+    }
+
+    fun setSelectedAiVoice(voice: String) {
+        _selectedAiVoice.value = voice
+    }
+
+    fun updateAudioVolume(id: String, newVol: Float) {
+        val sounds = _activeAudio.value.map { aud ->
+            if (aud.id == id) {
+                aud.copy(volume = newVol)
+            } else {
+                aud
+            }
+        }
+        _activeAudio.value = sounds
+        saveCurrentStateToDb()
+    }
+
+    fun updateSelectedAudioVolume(newVol: Float) {
+        val selId = _selectedAudioId.value ?: return
+        updateAudioVolume(selId, newVol)
+    }
+
+    fun convertTextToAiVoiceover() {
+        val selectedTxtId = _selectedTextId.value ?: return
+        val textClip = _activeTexts.value.find { it.id == selectedTxtId } ?: return
+        val voiceName = _selectedAiVoice.value
+
+        val voiceAudio = AudioTimelineClip(
+            id = "tts_${UUID.randomUUID().hashCode()}",
+            audioName = "🗣️ [$voiceName]: \"${if (textClip.text.length > 15) textClip.text.take(15) + "..." else textClip.text}\"",
+            startSec = textClip.startSec,
+            durationSec = textClip.durationSec,
+            volume = 1.0f,
+            isNarratorVoice = true
+        )
+
+        val updatedAudios = _activeAudio.value.toMutableList()
+        // Remove existing TTS audio starting at same place to allow redo
+        val filtered = updatedAudios.filterNot { it.startSec == textClip.startSec && it.isNarratorVoice }
+        val finalAudios = filtered + voiceAudio
+        _activeAudio.value = finalAudios
+        _selectedAudioId.value = voiceAudio.id
+        saveCurrentStateToDb()
+    }
+
+    // --- AI POWERED SHORTCUTS ---
+
+    // 1. Legendas Automáticas: transcribe current project audio track into synchronous subtitles
+    fun triggerAutoCaps() {
+        val generatedSubtexts = mutableListOf<TextTimelineClip>()
+        val currentAudios = _activeAudio.value
+        val currentClips = _activeClips.value
+
+        if (currentAudios.isNotEmpty()) {
+            // Transcribe from separate audio tracks
+            currentAudios.forEachIndexed { idx, aud ->
+                val cleanName = aud.audioName.replace(Regex("🗣️|🎵|🎵\\s|🗣️\\s|🎧|\\[.*?\\]:?\\s?|\\\""), "")
+                generatedSubtexts.add(
+                    TextTimelineClip(
+                        id = "auto_cap_aud_$idx",
+                        text = "🎤 $cleanName",
+                        startSec = aud.startSec,
+                        durationSec = aud.durationSec,
+                        colorHex = "#00F2FE", // Cyan
+                        fontSizeSp = 15f,
+                        styleAnim = "Neon Sparkle"
+                    )
+                )
+            }
+        } else if (currentClips.isNotEmpty()) {
+            // No audio tracks, transcribe based on thematic video clips
+            currentClips.forEachIndexed { idx, clip ->
+                val dialogue = when (clip.sourceName) {
+                    "Natureza Intro" -> "🍀 O amanhecer de um novo dia na floresta..."
+                    "Ação Cortada" -> "⚡ Sinta a adrenalina pura em movimento rápido!"
+                    "Cidade Broll" -> "🌆 O coração frenético da metrópole à noite..."
+                    else -> "✨ Desvendando novos ângulos com tecnologia I.A."
+                }
+                generatedSubtexts.add(
+                    TextTimelineClip(
+                        id = "auto_cap_clip_$idx",
+                        text = dialogue,
+                        startSec = clip.startSec,
+                        durationSec = clip.durationSec,
+                        colorHex = "#FFFF00", // Yellow for video track speech transcription!
+                        fontSizeSp = 15f,
+                        styleAnim = "Letra por Letra"
+                    )
+                )
+            }
+        }
+        _activeTexts.value = generatedSubtexts
+        saveCurrentStateToDb()
+    }
+
+    // 2. IA Script-to-Timeline: calling Gemini and appending directly to live tracks
+    fun generateAiContentToTimeline() {
+        val topic = _aiTopicInput.value
+        if (topic.isBlank() || _isGeneratingAi.value) return
+        _isGeneratingAi.value = true
+
+        viewModelScope.launch {
+            val duration = getMaxTimelineDuration().toInt().coerceIn(10, 60)
+            
+            // Runs Gemini builder in background threads
+            val responseCaptions = repository.draftAiScriptToTimeline(
+                niche = topic,
+                targetDurationSec = duration,
+                userRequests = "Incluir ganchos rápidos para redes sociais",
+                customApiKey = _customApiKey.value
+            )
+
+            // Construct new tracks
+            _activeTexts.value = responseCaptions
+
+            // Add corresponding simulated synthesised narrative speech voiceovers!
+            val updatedAudios = mutableListOf<AudioTimelineClip>()
+            responseCaptions.forEachIndexed { i, sub ->
+                val shortCaps = if (sub.text.length > 20) sub.text.take(20) + "..." else sub.text
+                updatedAudios.add(
+                    AudioTimelineClip(
+                        id = "narrator_ai_$i",
+                        audioName = "IA Voz: \"$shortCaps\"",
+                        startSec = sub.startSec,
+                        durationSec = sub.durationSec,
+                        volume = 1.0f,
+                        isNarratorVoice = true
+                    )
+                )
+            }
+            _activeAudio.value = updatedAudios
+
+            // Clear settings
+            _aiTopicInput.value = ""
+            _isGeneratingAi.value = false
+            saveCurrentStateToDb()
+        }
+    }
+
+    // --- SAVING & CREATING PROJECTS IN DATABASE ---
+
+    fun loadProject(project: VideoProject) {
+        _activeProject.value = project
+        _activeFilter.value = project.activeFilter
+        _speedRampProfile.value = project.speedRampProfile
+        _useChromaKey.value = project.useChromaKey
+        _chromaColorHex.value = project.chromaBgColor
+
+        _activeClips.value = repository.deserializeClips(project.clipsJson)
+        _activeAudio.value = repository.deserializeAudio(project.audioJson)
+        _activeTexts.value = repository.deserializeTexts(project.textsJson)
+
+        _selectedClipId.value = _activeClips.value.firstOrNull()?.id
+        _selectedAudioId.value = null
+        _selectedTextId.value = null
+        _currentTime.value = 0.0f
+    }
+
+    fun createStarterProject(title: String) {
+        viewModelScope.launch {
+            val defaultClips = listOf(
+                VideoTimelineClip("sc_1", "Natureza Intro", 0f, 4f, 1f, "Fade"),
+                VideoTimelineClip("sc_2", "Ação Cortada", 4f, 4f, 1f, "Glitch"),
+                VideoTimelineClip("sc_3", "Cidade Broll", 8f, 4f, 1f, "Zoom")
+            )
+            val defaultAudio = listOf(
+                AudioTimelineClip("aud_1", "Batida Lo-fi Estilo", 0f, 12f, 0.4f, false)
+            )
+            val defaultTexts = listOf(
+                TextTimelineClip("st_1", "⚡ Seja Bem-Vindo!", 0.5f, 3f, "#FFFFFF", 16f, "Surgir")
+            )
+
+            val newProj = VideoProject(
+                title = title,
+                durationSeconds = 12,
+                clipsJson = repository.serializeClips(defaultClips),
+                audioJson = repository.serializeAudio(defaultAudio),
+                textsJson = repository.serializeTexts(defaultTexts)
+            )
+
+            val newId = repository.saveProject(newProj)
+            val inserted = repository.getProjectById(newId)
+            if (inserted != null) {
+                loadProject(inserted)
+            }
+        }
+    }
+
+    fun saveCurrentStateToDb() {
+        val currentProj = _activeProject.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = currentProj.copy(
+                activeFilter = _activeFilter.value,
+                speedRampProfile = _speedRampProfile.value,
+                useChromaKey = _useChromaKey.value,
+                chromaBgColor = _chromaColorHex.value,
+                clipsJson = repository.serializeClips(_activeClips.value),
+                audioJson = repository.serializeAudio(_activeAudio.value),
+                textsJson = repository.serializeTexts(_activeTexts.value)
+            )
+            repository.saveProject(updated)
+            _activeProject.value = updated
+        }
+    }
+
+    fun deleteProjectItem(project: VideoProject) {
+        viewModelScope.launch {
+            repository.deleteProject(project)
+            if (_activeProject.value?.id == project.id) {
+                _activeProject.value = null
+                // Clear active
+                _activeClips.value = emptyList()
+                _activeAudio.value = emptyList()
+                _activeTexts.value = emptyList()
+            }
+        }
+    }
+
+    // --- EXP PORT SIMULATION ---
+
+    fun triggerExportSimulation(resolution: String, fps: Int) {
+        if (_exportProgress.value != -1) return
+        _exportProgress.value = 0
+
+        viewModelScope.launch {
+            for (p in 0..100 step 10) {
+                _exportProgress.value = p
+                delay(200)
+            }
+            // Done
+            val activeTitle = _activeProject.value?.title ?: "Meu Projeto"
+            val idStr = UUID.randomUUID().toString().take(6)
+            val fileDetail = "$activeTitle ($resolution @ $fps FPS)_$idStr.mp4"
+
+            val updatedGallery = _exportedVideos.value.toMutableList()
+            updatedGallery.add(0, fileDetail)
+            _exportedVideos.value = updatedGallery
+
+            // Persist locally
+            sharedPrefs.edit().putStringSet("exported_clips", updatedGallery.toSet()).apply()
+
+            _exportProgress.value = -1 // reset progress bouncer
+        }
+    }
+
+    fun clearMockGallery() {
+        _exportedVideos.value = emptyList()
+        sharedPrefs.edit().remove("exported_clips").apply()
+    }
+
+    // Save Custom API Key
+    fun saveApiKey(key: String) {
+        _customApiKey.value = key
+        sharedPrefs.edit().putString("custom_api_key", key).apply()
+    }
 }
-class ChatViewModelFactory(private val application:Application,private val repository:ChatRepository):ViewModelProvider.Factory{override fun<T:ViewModel>create(modelClass:Class<T>):T{if(modelClass.isAssignableFrom(ChatViewModel::class.java)){@Suppress("UNCHECKED_CAST") return ChatViewModel(application,repository) as T};throw IllegalArgumentException("Unknown ViewModel class")}}
+
+class ChatViewModelFactory(
+    private val application: Application,
+    private val repository: ChatRepository
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(ChatViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return ChatViewModel(application, repository) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}

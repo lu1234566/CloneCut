@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "CloneCut"
+rootProject.name = "My Application"
 
 include(":app")
