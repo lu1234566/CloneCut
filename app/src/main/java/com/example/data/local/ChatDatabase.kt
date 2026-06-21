@@ -8,7 +8,7 @@ data class VideoProject(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String,
     val durationSeconds: Int = 12,
-    val resolution: String = "1085p", // e.g., 1080p, 4K
+    val resolution: String = "1080p", // e.g., 1080p, 4K
     val fps: Int = 30,
     val activeFilter: String = "Nenhum", // e.g., Vintage, Cyberpunk, Cinematic, B&W
     val useChromaKey: Boolean = false,
@@ -41,7 +41,7 @@ interface VideoProjectDao {
     suspend fun deleteAllProjects()
 }
 
-@Database(entities = [VideoProject::class], version = 3, exportSchema = false)
+@Database(entities = [VideoProject::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun projectDao(): VideoProjectDao
 }

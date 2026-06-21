@@ -18,6 +18,17 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -44,11 +55,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.room.Room
 import com.example.data.local.AppDatabase
-import com.example.data.local.VideoProject
 import com.example.data.repository.ChatRepository
-import com.example.data.repository.VideoTimelineClip
-import com.example.data.repository.AudioTimelineClip
-import com.example.data.repository.TextTimelineClip
 import com.example.ui.ChatViewModel
 import com.example.ui.ChatViewModelFactory
 
@@ -77,7 +84,7 @@ class MainActivity : ComponentActivity() {
         database = Room.databaseBuilder(
             applicationContext,
             AppDatabase::class.java,
-            "capcut_clone_db_v5"
+            "capcut_clone_db_v4"
         )
         .fallbackToDestructiveMigration()
         .build()
@@ -187,7 +194,7 @@ fun MainAppScaffold(viewModel: ChatViewModel) {
                     selected = currentTab == "editor",
                     onClick = { viewModel.selectTab("editor") },
                     label = { Text("Editor", fontSize = 11.sp) },
-                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Área de Edição") },
+                    icon = { Icon(Icons.Default.Movie, contentDescription = "Área de Edição") },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = Color.Black,
                         selectedTextColor = CapCutActiveColor,
@@ -660,7 +667,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = String.format("00:%04.1f", currentTime),
+                        text = formatTimecode(currentTime),
                         color = CapCutActiveColor,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
@@ -681,7 +688,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
                                 .background(CapCutActiveColor, CircleShape)
                         ) {
                             Icon(
-                                imageVector = if (isPlaying) Icons.Default.Clear else Icons.Default.PlayArrow,
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 contentDescription = if (isPlaying) "Pausar" else "Play",
                                 tint = Color.Black
                             )
@@ -690,7 +697,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
                     }
 
                     Text(
-                        text = String.format("00:%04.1f", maxDuration),
+                        text = formatTimecode(maxDuration),
                         color = TextSubdued,
                         fontWeight = FontWeight.Medium,
                         fontSize = 14.sp
@@ -777,7 +784,6 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
                                     .clickable {
                                         viewModel.seekTo(clip.startSec)
                                         // Highlight clip edit selection
-                                        viewModel.saveCurrentStateToDb() // Flush
                                         viewModel.selectClip(clip.id)
                                     },
                                 contentAlignment = Alignment.Center
@@ -857,7 +863,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
-                                            imageVector = if (aud.isNarratorVoice) Icons.Default.Add else Icons.Default.Star,
+                                            imageVector = if (aud.isNarratorVoice) Icons.Default.RecordVoiceOver else Icons.Default.MusicNote,
                                             contentDescription = null,
                                             tint = Color.White.copy(alpha = 0.8f),
                                             modifier = Modifier.size(12.dp)
@@ -960,7 +966,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
             // A. DIVIRIR & APARAR (CLIP EDIT DECK)
             SectionHeader(
                 title = "Cortar & Splicing de Clipes",
-                icon = Icons.Default.Star,
+                icon = Icons.Default.ContentCut,
                 isSelected = expandedSection == "split_tools",
                 onClick = { expandedSection = "split_tools" }
             )
@@ -983,7 +989,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
                                     .testTag("split_button")
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Menu, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                                    Icon(Icons.Default.ContentCut, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text("Corte (Split)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
@@ -997,7 +1003,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text("Duplicar", fontSize = 11.sp)
                                 }
@@ -1046,7 +1052,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
             // B. VELOCIDADE & CURVAS (SPEED RAMP CHIPS)
             SectionHeader(
                 title = "Rampa de Velocidade & Curvas",
-                icon = Icons.Default.Share,
+                icon = Icons.Default.Speed,
                 isSelected = expandedSection == "speed_tools",
                 onClick = { expandedSection = "speed_tools" }
             )
@@ -1103,7 +1109,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
             // C. FILTROS DE COR, RECORTE I.A. & CHROMA KEY (VISUAL EFFECTS DECK)
             SectionHeader(
                 title = "I.A. Recorte, Retratos & Chroma Key",
-                icon = Icons.Default.Menu,
+                icon = Icons.Default.AutoAwesome,
                 isSelected = expandedSection == "filter_tools",
                 onClick = { expandedSection = "filter_tools" }
             )
@@ -1244,7 +1250,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
             // D. VOZ, LEGENDA & PROCESSAMENTO DE ÁUDIO I.A. (AI SHORTS CHANNELS)
             SectionHeader(
                 title = "I.A. Legendas, Vozes (TTS) & Redução de Ruído",
-                icon = Icons.Default.Refresh,
+                icon = Icons.Default.RecordVoiceOver,
                 isSelected = expandedSection == "ai_tools",
                 onClick = { expandedSection = "ai_tools" }
             )
@@ -1525,7 +1531,7 @@ fun EditorWorkspaceScreen(viewModel: ChatViewModel) {
             // E. EXPORTAR VÍDEO (RENDER PANEL)
             SectionHeader(
                 title = "Exportador de Vídeo 4K",
-                icon = Icons.Default.Check,
+                icon = Icons.Default.FileDownload,
                 isSelected = expandedSection == "export_tools",
                 onClick = { expandedSection = "export_tools" }
             )
@@ -1628,13 +1634,22 @@ fun SectionHeader(
             modifier = Modifier.weight(1f)
         )
         Icon(
-            imageVector = if (isSelected) Icons.Default.Menu else Icons.Default.Add,
+            imageVector = if (isSelected) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
             contentDescription = null,
             tint = TextSubdued,
             modifier = Modifier.size(16.dp)
         )
     }
     Divider(color = CapCutSurfaceBg.copy(alpha = 0.5f))
+}
+
+
+// Formats seconds into MM:SS.t (handles durations beyond 99.9s correctly).
+private fun formatTimecode(totalSeconds: Float): String {
+    val safe = totalSeconds.coerceAtLeast(0f)
+    val minutes = (safe / 60f).toInt()
+    val seconds = safe - minutes * 60
+    return String.format("%02d:%04.1f", minutes, seconds)
 }
 
 @Composable
